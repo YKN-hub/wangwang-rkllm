@@ -1,1 +1,128 @@
+name: export-rkllm
 
+# 两种触发方式:
+#  1) 改了本文件就自动跑(推送即触发, 免得非要谁去网页上点 Run workflow);
+#  2) Actions 页手动 Run workflow, 可以选模型和量化档。
+# 每个 dtype 各开一个 job —— 单次 CPU 量化 3B 要 1~3 小时,
+# 合在一个 job 里做两个会撞 GitHub Actions 单 job 6 小时上限。
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'ModelScope 上的模型名'
+        required: true
+        default: 'Qwen/Qwen2.5-3B-Instruct'
+        type: choice
+        options:
+          - 'Qwen/Qwen2.5-3B-Instruct'
+          - 'Qwen/Qwen2.5-1.5B-Instruct'
+      dtypes:
+        description: '要转的量化档, JSON 数组; 直接回车就是两档都转'
+        required: false
+        default: '["W4A16","W8A8"]'
+  push:
+    paths:
+      - '.github/workflows/export.yml'
+
+concurrency:
+  group: export-rkllm
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04          # 自带 python3.10, 与 rkllm_toolkit 的 cp310 wheel 对齐
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        # 手动触发时可以只填一档; 推送触发时 inputs 是空的, 走默认两档
+        dtype: ${{ fromJSON(github.event.inputs.dtypes || '["W4A16","W8A8"]') }}
+    name: ${{ github.event.inputs.model || 'Qwen/Qwen2.5-3B-Instruct' }} · ${{ matrix.dtype }}
+    env:
+      MODEL: ${{ github.event.inputs.model || 'Qwen/Qwen2.5-3B-Instruct' }}
+      DTYPE: ${{ matrix.dtype }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # wheel 只能人工从瑞芯微网盘拿到(已确认 PyPI 上没有 rkllm_toolkit)。
+      # 首选: cp310 那个 .whl(7.2MB)直接当普通文件放在仓库根目录, 网页上传上限 25MB 装得下,
+      #       这样全程不需要任何 token, CI 也不用额外下载。
+      # 备选: 不想让 wheel 进 git 的话, 建一个 tag=rkllm-wheel 的 Release 把它当附件挂上, 下面会兜住。
+      - name: 安装 rkllm wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          WHL=rkllm_toolkit-1.3.1-cp310-cp310-linux_x86_64.whl
+          if [ ! -f "$WHL" ]; then
+            echo "仓库根目录没有 $WHL, 改从 Release(tag=rkllm-wheel) 取"
+            mkdir -p wheels
+            gh release download rkllm-wheel --pattern '*.whl' -D wheels/ -c || true
+            cp wheels/$WHL . || { echo "!! 两处都没有 cp310 wheel, 转换没法开始"; exit 1; }
+          fi
+          ls -la "$WHL"
+
+      # requirements.txt 是 SDK 里那份原样拷进来的(transformers/torch 都是死-pin),
+      # 自己随便 pip install -U 会装出不匹配的版本, 量化阶段直接报错。
+      - name: 装依赖
+        run: |
+          set -e
+          pip install -U pip wheel setuptools
+          pip install "torch==2.6.0" "torchvision==0.21.0" \
+              --index-url https://download.pytorch.org/whl/cpu
+          # auto_gptq 只有源码包, 偶尔会在无 CUDA 的 runner 上编不过 —— Qwen 用不到它, 编不过就跳过
+          pip install -r requirements.txt || {
+            echo "!! 整包安装失败, 去掉 auto_gptq 重试";
+            grep -v '^auto_gptq' requirements.txt > /tmp/reqs.txt;
+            pip install -r /tmp/reqs.txt; }
+          pip install --no-deps ./rkllm_toolkit-*-cp310-cp310-linux_x86_64.whl
+          python -c "from rkllm.api import RKLLM; import transformers, torch; \
+                     print('rkllm OK  transformers', transformers.__version__, ' torch', torch.__version__)"
+
+      - name: 下载源模型
+        run: |
+          pip install -U modelscope
+          modelscope download --model "$MODEL" --local_dir ./src
+          du -sh ./src; ls -la ./src | head -20
+
+      - name: 转换
+        run: |
+          python export_rkllm.py --model ./src --dtype "$DTYPE" \
+                                 --max-context 2048 --out-dir ./out
+        env:
+          HF_HUB_OFFLINE: '1'
+
+      # GitHub Release 单文件上限 2GB, 3B W8A8 约 3.3GB -> 分卷
+      - name: 分卷并校验
+        run: |
+          cd out
+          for f in *.rkllm; do
+            md5sum "$f" | tee -a md5.txt
+            big=$(stat -c %s "$f")
+            if [ "$big" -gt 1900000000 ]; then
+              split -b 1800m "$f" "$f.part_"
+              rm -f "$f"
+              for p in "$f".part_*; do md5sum "$p" | tee -a md5.txt; done
+            fi
+          done
+          ls -la
+
+      - name: 发 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          short=$(basename "$MODEL" | tr '.' '_')
+          tag="rkllm-${short}-${DTYPE}-$(date +%Y%m%d-%H%M)"
+          gh release create "$tag" out/* \
+            --title "RKLLM $MODEL $DTYPE for RK3588" \
+            --notes "由 Actions 生成。拼接与校验命令见仓库 README 的「拿回产物」一节。tag=$tag"
+          echo "### Release: $tag" >> "$GITHUB_STEP_SUMMARY"
+          gh release view "$tag" --json assets -q '.assets[].name' >> "$GITHUB_STEP_SUMMARY"

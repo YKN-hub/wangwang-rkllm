@@ -10,12 +10,13 @@
    - `console.box.lenovo.com/l/l0tXb8`（提取码 `rkllm`）或 `console.zbox.filez.com/l/RJJDmB`
    - 找 `rknn-llm-release-v1.3.x.zip`
 2. 解压，从里面取 **两个** 东西：
-   - `rkllm-toolkit/packages/rkllm_toolkit-1.3.x-cp310-cp310-linux_x86_64.whl` ← 要传上仓库
+   - `rkllm-toolkit/packages/rkllm_toolkit-1.3.1-cp310-cp310-linux_x86_64.whl` ← **传到本仓库根目录**（7.2 MB，网页上传上限 25 MB，装得下）
    - `rkllm-runtime/Linux/librkllm_api/aarch64/librkllmrt.so` ← 盒子要的运行时，**留着别传**
    > wheel 文件名里的 `cp310` 必须对应 Python 3.10，`linux_x86_64` 必须是 x86 版；
    > 别用 `pip install git+https://github.com/airockchip/rknn-llm.git`，那样会缺预编译的 C++ 扩展，
    > 后面报 `No module named 'rkllm'`。
-3. 在本仓库建一个 Release，tag 填 `rkllm-wheel`，把那个 `.whl` 拖进 "Attach binaries" 里上传。
+   > 已确认 PyPI 上查不到 `rkllm_toolkit`，这个 wheel 没有第二条来路。
+   > 不想让 wheel 进 git 也行：CI 会退回去找 tag=`rkllm-wheel` 的 Release 并从里面下载。
 
 ## 仓库里必须有这几个文件
 
@@ -24,6 +25,7 @@
 export_rkllm.py
 requirements.txt                 ← 从 SDK 的 rkllm-toolkit/packages/ 里拷来的死-pin，别改
 data_quant.json                  ← 量化校准语料，已从 SDK 里拷进仓库，CI 不再依赖外网
+rkllm_toolkit-1.3.1-cp310-cp310-linux_x86_64.whl  ← 见上一节
 ```
 
 > GitHub 网页版 "Add file → Upload files" 会把 `.github` 这种带点开头的目录名吃掉，
@@ -31,13 +33,14 @@ data_quant.json                  ← 量化校准语料，已从 SDK 里拷进�
 > 要么用 git 命令行推，要么在网页上 "Add file → Create new file"，
 > 在文件名框里**直接敲完整路径** `.github/workflows/export.yml`，GitHub 会自动补出目录层级。
 
-## 跑转换
+## 怎么触发
 
-Actions 页 → 左侧 "export-rkllm" → Run workflow →
+**改 `.github/workflows/export.yml` 并推送 —— 推一次就跑一次**，不用谁去网页上点 Run workflow。
+或者 Actions 页 → 左侧 "export-rkllm" → Run workflow：
 - `model` 选 `Qwen/Qwen2.5-3B-Instruct`
-- `dtypes` 填 `W4A16,W8A8`（会并行开两个 job）
+- `dtypes` 是 JSON 数组，默认 `["W4A16","W8A8"]`（并行开两个 job）；只转一档就填 `["W4A16"]`
 
-单个 3B 在 CI 的 4 核 CPU 上量化约 1~3 小时。日志里会打 `[1/3] load → [2/3] build → [3/3] export`。
+单次 3B 在 CI 的 4 核 CPU 上量化约 1~3 小时。日志里会打 `[1/3] load → [2/3] build → [3/3] export`。
 
 ## 拿回产物
 
