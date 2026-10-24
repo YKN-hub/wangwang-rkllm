@@ -1,4 +1,4 @@
-# RKLLM 转换（GitHub Actions 版）
+# RKLLM 转换
 
 把 HuggingFace 的 Qwen2.5 权重转成 RK3588 NPU 能跑的 `.rkllm`。
 不需要你自己的电脑装 WSL、不需要 CUDA，只需要浏览器点几下。
