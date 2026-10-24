@@ -17,6 +17,20 @@
    > 后面报 `No module named 'rkllm'`。
 3. 在本仓库建一个 Release，tag 填 `rkllm-wheel`，把那个 `.whl` 拖进 "Attach binaries" 里上传。
 
+## 仓库里必须有这几个文件
+
+```
+.github/workflows/export.yml     ← 注意 .github 这个带点的目录，少一层 Actions 就看不到
+export_rkllm.py
+requirements.txt                 ← 从 SDK 的 rkllm-toolkit/packages/ 里拷来的死-pin，别改
+data_quant.json                  ← 量化校准语料，已从 SDK 里拷进仓库，CI 不再依赖外网
+```
+
+> GitHub 网页版 "Add file → Upload files" 会把 `.github` 这种带点开头的目录名吃掉，
+> 传上去变成根目录的 `workflows/`，Actions 就永远看不到这个 workflow。
+> 要么用 git 命令行推，要么在网页上 "Add file → Create new file"，
+> 在文件名框里**直接敲完整路径** `.github/workflows/export.yml`，GitHub 会自动补出目录层级。
+
 ## 跑转换
 
 Actions 页 → 左侧 "export-rkllm" → Run workflow →
