@@ -44,6 +44,9 @@ jobs:
     env:
       MODEL: ${{ matrix.model }}
       DTYPE: ${{ matrix.dtype }}
+      # 官方 benchmark.md 第 5 行要求用 0(性能优先); 1 是精度优先但会掉速度。
+      # 想比较两种档就改这一行再推一次。
+      OPTLEVEL: '0'
     steps:
       - uses: actions/checkout@v4
 
@@ -97,6 +100,7 @@ jobs:
           set -o pipefail
           NAME=$(basename "$MODEL" | tr '.' '_')
           python export_rkllm.py --model ./src --name "$NAME" --dtype "$DTYPE" \
+                                 --opt-level "${OPTLEVEL:-1}" \
                                  --max-context 2048 --out-dir ./out 2>&1 | tee conv.log
         env:
           HF_HUB_OFFLINE: '1'

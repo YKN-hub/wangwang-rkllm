@@ -36,6 +36,10 @@ def main():
     # 权重目录在 CI 里统一叫 ./src, 拿它当产物名会得到 src_W8A8_RK3588.rkllm ——
     # 换模型也是同一个名字, 两个 Release 会撞车, 所以必须能显式指定。
     ap.add_argument("--name", default=None, help="产物文件名前缀")
+    # 官方 benchmark.md 第 5 行: "All models should be converted with optimization_level
+    # set to 0 to enable optimized runtime performance". 之前固定用 1(精度优先), 实测
+    # 1.5B 只有 11.6 tok/s, 而官方同模型同 dtype 公布值是 16.69 —— 差在这。
+    ap.add_argument("--opt-level", type=int, default=1, choices=[0, 1])
     args = ap.parse_args()
 
     legal = SUPPORTED.get(args.platform.upper())
@@ -57,9 +61,9 @@ def main():
     if ret != 0:
         raise SystemExit(f"load 失败 ret={ret}")
 
-    print(f"[2/3] build dtype={args.dtype} algo={ALGO[args.dtype]} "
+    print(f"[2/3] build dtype={args.dtype} algo={ALGO[args.dtype]} opt_level={args.opt_level} "
           f"platform={args.platform} max_context={args.max_context}", flush=True)
-    ret = llm.build(do_quantization=True, optimization_level=1,
+    ret = llm.build(do_quantization=True, optimization_level=args.opt_level,
                     quantized_dtype=args.dtype.lower(), quantized_algorithm=ALGO[args.dtype],
                     target_platform=args.platform, num_npu_core=args.npu_core,
                     extra_qparams=None, dataset=args.calib, hybrid_rate=0,
